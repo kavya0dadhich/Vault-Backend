@@ -20,7 +20,31 @@ const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(compression());
-app.use(cors({ origin: env.clientUrl, credentials: true }));
+
+// CLIENT_URL may list several origins (comma-separated). Trailing slashes are
+// stripped so a configured "https://app.com/" still matches the browser's
+// slash-less Origin header. The function form echoes the caller's exact Origin
+// (required when credentials are used — you can't reflect "*").
+const allowedOrigins = env.clientUrl
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow non-browser clients (no Origin header, e.g. curl/health checks)
+      // and any configured origin.
+      if (!origin || allowedOrigins.includes(origin.replace(/\/+$/, ''))) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+    credentials: true,
+  })
+);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(sanitizeMongo);
