@@ -89,7 +89,7 @@ src/
   routes/        route definitions
   services/      business logic (auth, file, card, storage, image)
   utils/         helpers (image enhancement)
-  index.ts       app bootstrap
+  app.ts         app bootstrap
 ```
 
 ## Scripts

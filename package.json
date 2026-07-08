@@ -2,11 +2,11 @@
   "name": "document-vault-backend",
   "version": "1.0.0",
   "description": "Personal Document Vault API",
-  "main": "dist/index.js",
+  "main": "dist/app.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/app.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/app.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",
