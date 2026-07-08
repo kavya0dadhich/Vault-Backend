@@ -128,7 +128,7 @@ export const getFiles = async (
   const sortOrder = query.sortOrder === 'asc' ? 1 : -1;
 
   const [files, total] = await Promise.all([
-    File.find(filter).sort({ isFolder: -1, [sortField]: sortOrder }).skip(skip).limit(limit),
+    File.find(filter).sort({ isFolder: -1, [sortField]: sortOrder }).skip(skip).limit(limit).lean(),
     File.countDocuments(filter),
   ]);
 
@@ -152,10 +152,13 @@ export const searchFiles = async (
   const filter: Record<string, unknown> = { userId, isTrashed: false, isFolder: false };
 
   if (params.q) {
+    // Escape regex metacharacters so a search term can't inject a regex or
+    // trigger catastrophic backtracking (ReDoS) against the collection.
+    const safe = params.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.$or = [
-      { name: { $regex: params.q, $options: 'i' } },
-      { originalName: { $regex: params.q, $options: 'i' } },
-      { tags: { $regex: params.q, $options: 'i' } },
+      { name: { $regex: safe, $options: 'i' } },
+      { originalName: { $regex: safe, $options: 'i' } },
+      { tags: { $regex: safe, $options: 'i' } },
     ];
   }
   if (params.tags) filter.tags = { $in: params.tags.split(',').map((t) => t.trim()) };
@@ -178,7 +181,7 @@ export const searchFiles = async (
   const skip = (page - 1) * limit;
 
   const [files, total] = await Promise.all([
-    File.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    File.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     File.countDocuments(filter),
   ]);
 
@@ -364,7 +367,7 @@ export const getImages = async (userId: string, page = 1, limit = 24) => {
   const filter = { userId, isTrashed: false, isFolder: false, mimeType: { $regex: '^image/' } };
   const skip = (page - 1) * limit;
   const [images, total] = await Promise.all([
-    File.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    File.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     File.countDocuments(filter),
   ]);
   return { images, total, page, totalPages: Math.ceil(total / limit) };

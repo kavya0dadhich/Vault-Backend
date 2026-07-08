@@ -128,13 +128,14 @@ export const resetPassword = async (token: string, newPassword: string) => {
   const user = await User.findOne({
     resetPasswordToken: hashedToken,
     resetPasswordExpires: { $gt: new Date() },
-  }).select('+resetPasswordToken +resetPasswordExpires +password');
+  }).select('+resetPasswordToken +resetPasswordExpires +password +refreshToken');
 
   if (!user) throw new AppError('Invalid or expired reset token', 400);
 
   user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
   user.resetPasswordToken = undefined;
   user.resetPasswordExpires = undefined;
+  user.refreshToken = undefined; // invalidate existing sessions after a reset
   await user.save();
 
   await Activity.create({
@@ -148,13 +149,14 @@ export const resetPassword = async (token: string, newPassword: string) => {
 };
 
 export const changePassword = async (userId: string, currentPassword: string, newPassword: string) => {
-  const user = await User.findById(userId).select('+password');
+  const user = await User.findById(userId).select('+password +refreshToken');
   if (!user) throw new AppError('User not found', 404);
 
   const isMatch = await bcrypt.compare(currentPassword, user.password);
   if (!isMatch) throw new AppError('Current password is incorrect', 400);
 
   user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  user.refreshToken = undefined; // invalidate existing sessions after a password change
   await user.save();
 
   return { message: 'Password changed successfully' };

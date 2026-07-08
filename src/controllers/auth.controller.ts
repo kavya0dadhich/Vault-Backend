@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { body } from 'express-validator';
 import { AuthRequest } from '../middleware/auth';
+import { User } from '../models/User';
 import * as authService from '../services/auth.service';
 
 export const registerValidation = [
@@ -62,26 +63,41 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
   const allowed = ['firstName', 'lastName', 'phone', 'bio', 'avatar'];
   const updates: Record<string, string> = {};
   for (const key of allowed) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key];
+    if (typeof req.body[key] === 'string') updates[key] = req.body[key];
   }
 
-  const { User } = await import('../models/User');
   const user = await User.findByIdAndUpdate(req.userId, updates, { new: true });
   res.json({ user });
 };
 
 export const updateSettings = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { User } = await import('../models/User');
-  const user = await User.findByIdAndUpdate(
-    req.userId,
-    { settings: req.body },
-    { new: true }
-  );
+  // Merge only known, validated fields via dot-notation $set so a partial update
+  // (e.g. just { theme }) doesn't wipe the rest of the settings object, and no
+  // arbitrary/unknown keys can be mass-assigned onto the user document.
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const updates: Record<string, unknown> = {};
+
+  if (typeof body.theme === 'string' && ['light', 'dark', 'system'].includes(body.theme)) {
+    updates['settings.theme'] = body.theme;
+  }
+  if (typeof body.accentColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(body.accentColor)) {
+    updates['settings.accentColor'] = body.accentColor;
+  }
+  if (typeof body.language === 'string' && body.language.length <= 10) {
+    updates['settings.language'] = body.language;
+  }
+  if (body.notifications && typeof body.notifications === 'object') {
+    const n = body.notifications as Record<string, unknown>;
+    (['email', 'upload', 'share'] as const).forEach((k) => {
+      if (typeof n[k] === 'boolean') updates[`settings.notifications.${k}`] = n[k];
+    });
+  }
+
+  const user = await User.findByIdAndUpdate(req.userId, { $set: updates }, { new: true });
   res.json({ settings: user?.settings });
 };
 
 export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { User } = await import('../models/User');
   await User.findByIdAndUpdate(req.userId, { refreshToken: null });
   res.json({ message: 'Logged out successfully' });
 };

@@ -2,11 +2,13 @@ import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { connectDatabase } from './config/database';
 import { env, validateEnv } from './config/env';
 import routes from './routes';
 import { errorHandler } from './middleware/errorHandler';
+import { sanitizeMongo } from './middleware/sanitize';
 
 validateEnv();
 
@@ -17,9 +19,11 @@ process.on('unhandledRejection', (reason) => {
 const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(compression());
 app.use(cors({ origin: env.clientUrl, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(sanitizeMongo);
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -42,6 +46,11 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api', routes);
+
+// Unknown API route → JSON 404 (never an HTML error page or stack trace).
+app.use((_req, res) => {
+  res.status(404).json({ message: 'Resource not found' });
+});
 
 app.use(errorHandler);
 
