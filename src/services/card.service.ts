@@ -2,6 +2,7 @@ import { Card, ICard, CardGradient } from '../models/Card';
 import { Activity } from '../models/Activity';
 import { uploadFile, deleteStoredFile, getPresignedViewUrl } from './storage.service';
 import { assertStorageQuota } from './storage.quota.service';
+import { contentMatchesMime } from '../utils/fileSignature';
 import { AppError } from '../middleware/errorHandler';
 import { enhanceCardImage } from '../utils/imageEnhance';
 
@@ -14,6 +15,9 @@ const validateCardImage = (file: Express.Multer.File, side: string): void => {
   }
   if (file.size > MAX_CARD_IMAGE_SIZE) {
     throw new AppError(`${side} image exceeds 15MB limit`, 400);
+  }
+  if (!contentMatchesMime(file.buffer, file.mimetype)) {
+    throw new AppError(`${side} image content does not match its file type`, 400);
   }
 };
 
@@ -48,16 +52,26 @@ export const createCard = async (
     ? await uploadFile(userId, backBuffer, back.originalname, back.mimetype)
     : null;
 
-  const card = await Card.create({
-    userId,
-    name,
-    gradient,
-    frontKey: frontUpload.key,
-    backKey: backUpload?.key,
-    frontSize: frontBuffer.length,
-    backSize: backBuffer?.length ?? 0,
-    storageType: frontUpload.storageType,
-  });
+  let card: ICard;
+  try {
+    card = await Card.create({
+      userId,
+      name,
+      gradient,
+      frontKey: frontUpload.key,
+      backKey: backUpload?.key,
+      frontSize: frontBuffer.length,
+      backSize: backBuffer?.length ?? 0,
+      storageType: frontUpload.storageType,
+    });
+  } catch (err) {
+    // Roll back uploaded images so a failed DB write doesn't leave orphans.
+    await deleteStoredFile(frontUpload.key, frontUpload.storageType, userId).catch(() => undefined);
+    if (backUpload) {
+      await deleteStoredFile(backUpload.key, backUpload.storageType, userId).catch(() => undefined);
+    }
+    throw err;
+  }
 
   await Activity.create({ userId, action: 'created_card', targetType: 'card', targetId: card._id, targetName: name });
   return withUrls(card, userId);

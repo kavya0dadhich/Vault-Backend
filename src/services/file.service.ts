@@ -5,6 +5,7 @@ import { Activity } from '../models/Activity';
 import { uploadFile, deleteStoredFile, getPresignedDownloadUrl, getPresignedViewUrl, getPresignedUploadUrl } from './storage.service';
 import { getDashboardCardSummary } from './card.service';
 import { getUserStorageUsage, assertStorageQuota } from './storage.quota.service';
+import { contentMatchesMime } from '../utils/fileSignature';
 import { AppError } from '../middleware/errorHandler';
 
 // Everything that counts as a "document" for the Documents page, search filter, and dashboard.
@@ -94,22 +95,32 @@ export const uploadFiles = async (
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     validateFile(file.mimetype, file.size);
+    if (!contentMatchesMime(file.buffer, file.mimetype)) {
+      throw new AppError(`"${file.originalname}" content does not match its file type`, 400);
+    }
     const { key, url, storageType } = await uploadFile(userId, file.buffer, file.originalname, file.mimetype);
     const displayName = resolveUploadDisplayName(options.names?.[i], file.originalname);
 
-    const doc = await File.create({
-      userId,
-      name: displayName,
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      size: file.size,
-      s3Key: key,
-      s3Url: url,
-      storageType,
-      folderId: options.folderId || null,
-      category: options.category || 'personal',
-      tags: options.tags || [],
-    });
+    let doc: IFile;
+    try {
+      doc = await File.create({
+        userId,
+        name: displayName,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        s3Key: key,
+        s3Url: url,
+        storageType,
+        folderId: options.folderId || null,
+        category: options.category || 'personal',
+        tags: options.tags || [],
+      });
+    } catch (err) {
+      // Roll back the stored object so a failed DB write doesn't leave an orphan.
+      await deleteStoredFile(key, storageType, userId).catch(() => undefined);
+      throw err;
+    }
 
     await logActivity(userId, 'uploaded', 'file', doc._id, displayName, { size: file.size });
     results.push(doc);

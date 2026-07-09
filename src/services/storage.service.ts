@@ -43,6 +43,8 @@ export const uploadFile = async (
         Key: key,
         Body: buffer,
         ContentType: mimeType,
+        // Encrypt every object at rest (SSE-S3 / AES-256).
+        ServerSideEncryption: 'AES256',
       })
     );
     return { key, url: `s3://${env.awsS3Bucket}/${key}`, storageType: 's3' };
