@@ -64,6 +64,15 @@ export const listCards = async (userId: string) => {
   return Promise.all(cards.map((c) => withUrls(c, userId)));
 };
 
+export const getDashboardCardSummary = async (userId: string, limit = 3) => {
+  const [totalCards, recent] = await Promise.all([
+    Card.countDocuments({ userId }),
+    Card.find({ userId }).sort({ createdAt: -1 }).limit(limit),
+  ]);
+  const recentCards = await Promise.all(recent.map((c) => withUrls(c, userId)));
+  return { totalCards, recentCards };
+};
+
 export const renameCard = async (userId: string, cardId: string, name: string) => {
   const card = await Card.findOne({ _id: cardId, userId });
   if (!card) throw new AppError('Card not found', 404);

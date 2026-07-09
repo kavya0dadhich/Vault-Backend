@@ -83,9 +83,6 @@ export const updateSettings = async (req: AuthRequest, res: Response): Promise<v
   if (typeof body.accentColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(body.accentColor)) {
     updates['settings.accentColor'] = body.accentColor;
   }
-  if (typeof body.language === 'string' && body.language.length <= 10) {
-    updates['settings.language'] = body.language;
-  }
   if (body.notifications && typeof body.notifications === 'object') {
     const n = body.notifications as Record<string, unknown>;
     (['email', 'upload', 'share'] as const).forEach((k) => {

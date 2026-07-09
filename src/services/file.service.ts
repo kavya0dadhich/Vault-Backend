@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { File, IFile, FileCategory } from '../models/File';
 import { Activity } from '../models/Activity';
 import { uploadFile, deleteStoredFile, getPresignedDownloadUrl, getPresignedViewUrl, getPresignedUploadUrl } from './storage.service';
+import { getDashboardCardSummary } from './card.service';
 import { AppError } from '../middleware/errorHandler';
 
 // Everything that counts as a "document" for the Documents page, search filter, and dashboard.
@@ -339,13 +340,29 @@ export const confirmPresignedUpload = async (
 export const getDashboardStats = async (userId: string) => {
   const baseFilter = { userId, isTrashed: false, isFolder: false };
 
-  const [totalFiles, totalImages, totalDocuments, recentUploads, storageAgg, recentActivity] = await Promise.all([
+  const [
+    totalFiles,
+    totalImages,
+    totalDocuments,
+    favoriteCount,
+    recentUploads,
+    storageAgg,
+    categoryAgg,
+    cardSummary,
+  ] = await Promise.all([
     File.countDocuments(baseFilter),
     File.countDocuments({ ...baseFilter, mimeType: { $regex: '^image/' } }),
     File.countDocuments({ ...baseFilter, mimeType: { $in: DOCUMENT_MIME_TYPES } }),
+    File.countDocuments({ ...baseFilter, isFavorite: true }),
     File.find(baseFilter).sort({ createdAt: -1 }).limit(5),
     File.aggregate([{ $match: baseFilter }, { $group: { _id: null, totalSize: { $sum: '$size' } } }]),
-    Activity.find({ userId }).sort({ createdAt: -1 }).limit(10),
+    File.aggregate([
+      { $match: baseFilter },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 8 },
+    ]),
+    getDashboardCardSummary(userId, 3),
   ]);
 
   const totalSize = storageAgg[0]?.totalSize || 0;
@@ -355,11 +372,17 @@ export const getDashboardStats = async (userId: string) => {
     totalFiles,
     totalImages,
     totalDocuments,
+    totalCards: cardSummary.totalCards,
+    favoriteCount,
     recentUploads,
+    recentCards: cardSummary.recentCards,
     storageUsed: totalSize,
     storageLimit,
     storagePercentage: Math.min((totalSize / storageLimit) * 100, 100),
-    recentActivity,
+    categoryBreakdown: categoryAgg.map((row: { _id: string; count: number }) => ({
+      category: row._id,
+      count: row.count,
+    })),
   };
 };
 
