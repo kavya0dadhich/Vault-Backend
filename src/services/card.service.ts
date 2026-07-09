@@ -1,6 +1,7 @@
 import { Card, ICard, CardGradient } from '../models/Card';
 import { Activity } from '../models/Activity';
 import { uploadFile, deleteStoredFile, getPresignedViewUrl } from './storage.service';
+import { assertStorageQuota } from './storage.quota.service';
 import { AppError } from '../middleware/errorHandler';
 import { enhanceCardImage } from '../utils/imageEnhance';
 
@@ -39,6 +40,9 @@ export const createCard = async (
   const frontBuffer = await enhanceCardImage(front.buffer, front.mimetype);
   const backBuffer = back ? await enhanceCardImage(back.buffer, back.mimetype) : null;
 
+  const incomingBytes = frontBuffer.length + (backBuffer?.length ?? 0);
+  await assertStorageQuota(userId, incomingBytes);
+
   const frontUpload = await uploadFile(userId, frontBuffer, front.originalname, front.mimetype);
   const backUpload = back && backBuffer
     ? await uploadFile(userId, backBuffer, back.originalname, back.mimetype)
@@ -50,8 +54,8 @@ export const createCard = async (
     gradient,
     frontKey: frontUpload.key,
     backKey: backUpload?.key,
-    frontSize: front.size,
-    backSize: back?.size || 0,
+    frontSize: frontBuffer.length,
+    backSize: backBuffer?.length ?? 0,
     storageType: frontUpload.storageType,
   });
 

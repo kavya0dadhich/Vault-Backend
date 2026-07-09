@@ -4,6 +4,7 @@ import { File, IFile, FileCategory } from '../models/File';
 import { Activity } from '../models/Activity';
 import { uploadFile, deleteStoredFile, getPresignedDownloadUrl, getPresignedViewUrl, getPresignedUploadUrl } from './storage.service';
 import { getDashboardCardSummary } from './card.service';
+import { getUserStorageUsage, assertStorageQuota } from './storage.quota.service';
 import { AppError } from '../middleware/errorHandler';
 
 // Everything that counts as a "document" for the Documents page, search filter, and dashboard.
@@ -77,6 +78,9 @@ export const uploadFiles = async (
   files: Express.Multer.File[],
   options: { folderId?: string; category?: FileCategory; tags?: string[] }
 ) => {
+  const totalIncoming = files.reduce((sum, f) => sum + f.size, 0);
+  await assertStorageQuota(userId, totalIncoming);
+
   const results: IFile[] = [];
 
   for (const file of files) {
@@ -321,6 +325,7 @@ export const confirmPresignedUpload = async (
   data: { key: string; originalName: string; mimeType: string; size: number; folderId?: string; category?: FileCategory }
 ) => {
   validateFile(data.mimeType, data.size);
+  await assertStorageQuota(userId, data.size);
   const doc = await File.create({
     userId,
     name: data.originalName,
@@ -346,16 +351,15 @@ export const getDashboardStats = async (userId: string) => {
     totalDocuments,
     favoriteCount,
     recentUploads,
-    storageAgg,
     categoryAgg,
     cardSummary,
+    storageUsage,
   ] = await Promise.all([
     File.countDocuments(baseFilter),
     File.countDocuments({ ...baseFilter, mimeType: { $regex: '^image/' } }),
     File.countDocuments({ ...baseFilter, mimeType: { $in: DOCUMENT_MIME_TYPES } }),
     File.countDocuments({ ...baseFilter, isFavorite: true }),
     File.find(baseFilter).sort({ createdAt: -1 }).limit(5),
-    File.aggregate([{ $match: baseFilter }, { $group: { _id: null, totalSize: { $sum: '$size' } } }]),
     File.aggregate([
       { $match: baseFilter },
       { $group: { _id: '$category', count: { $sum: 1 } } },
@@ -363,10 +367,8 @@ export const getDashboardStats = async (userId: string) => {
       { $limit: 8 },
     ]),
     getDashboardCardSummary(userId, 3),
+    getUserStorageUsage(userId),
   ]);
-
-  const totalSize = storageAgg[0]?.totalSize || 0;
-  const storageLimit = 5 * 1024 * 1024 * 1024; // 5GB display limit
 
   return {
     totalFiles,
@@ -376,9 +378,11 @@ export const getDashboardStats = async (userId: string) => {
     favoriteCount,
     recentUploads,
     recentCards: cardSummary.recentCards,
-    storageUsed: totalSize,
-    storageLimit,
-    storagePercentage: Math.min((totalSize / storageLimit) * 100, 100),
+    storageUsed: storageUsage.totalBytes,
+    storageUsedFiles: storageUsage.filesBytes,
+    storageUsedCards: storageUsage.cardsBytes,
+    storageLimit: storageUsage.limitBytes,
+    storagePercentage: storageUsage.percentage,
     categoryBreakdown: categoryAgg.map((row: { _id: string; count: number }) => ({
       category: row._id,
       count: row.count,
