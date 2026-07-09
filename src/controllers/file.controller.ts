@@ -14,9 +14,17 @@ export const uploadFiles = async (req: AuthRequest, res: Response): Promise<void
     return;
   }
 
-  const { folderId, category, tags } = req.body;
+  const { folderId, category, tags, names } = req.body;
   const parsedTags = tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [];
-  const results = await fileService.uploadFiles(req.userId!, files, { folderId, category, tags: parsedTags });
+  const parsedNames = names
+    ? (typeof names === 'string' ? JSON.parse(names) : names)
+    : undefined;
+  const results = await fileService.uploadFiles(req.userId!, files, {
+    folderId,
+    category,
+    tags: parsedTags,
+    names: Array.isArray(parsedNames) ? parsedNames : undefined,
+  });
   res.status(201).json({ files: results });
 };
 

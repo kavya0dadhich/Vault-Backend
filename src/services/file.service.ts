@@ -73,23 +73,33 @@ export const createFolder = async (userId: string, name: string, folderId?: stri
   return folder;
 };
 
+export const resolveUploadDisplayName = (customName: string | undefined, originalName: string): string => {
+  const trimmed = customName?.trim();
+  if (!trimmed) return originalName;
+  const ext = path.extname(originalName);
+  if (path.extname(trimmed)) return trimmed;
+  return `${trimmed}${ext}`;
+};
+
 export const uploadFiles = async (
   userId: string,
   files: Express.Multer.File[],
-  options: { folderId?: string; category?: FileCategory; tags?: string[] }
+  options: { folderId?: string; category?: FileCategory; tags?: string[]; names?: string[] }
 ) => {
   const totalIncoming = files.reduce((sum, f) => sum + f.size, 0);
   await assertStorageQuota(userId, totalIncoming);
 
   const results: IFile[] = [];
 
-  for (const file of files) {
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
     validateFile(file.mimetype, file.size);
     const { key, url, storageType } = await uploadFile(userId, file.buffer, file.originalname, file.mimetype);
+    const displayName = resolveUploadDisplayName(options.names?.[i], file.originalname);
 
     const doc = await File.create({
       userId,
-      name: file.originalname,
+      name: displayName,
       originalName: file.originalname,
       mimeType: file.mimetype,
       size: file.size,
@@ -101,7 +111,7 @@ export const uploadFiles = async (
       tags: options.tags || [],
     });
 
-    await logActivity(userId, 'uploaded', 'file', doc._id, file.originalname, { size: file.size });
+    await logActivity(userId, 'uploaded', 'file', doc._id, displayName, { size: file.size });
     results.push(doc);
   }
 
