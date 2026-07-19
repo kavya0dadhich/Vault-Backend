@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import fs from 'fs';
+import path from 'path';
 import { AuthRequest } from '../middleware/auth';
 import * as fileService from '../services/file.service';
 import { getLocalFilePath, getFileStream } from '../services/storage.service';
@@ -136,27 +137,44 @@ export const updateMetadata = async (req: AuthRequest, res: Response): Promise<v
 
 export const serveLocalFile = async (req: AuthRequest, res: Response): Promise<void> => {
   const userId = param(req.params.userId);
-  const fileName = param(req.params.fileName);
-  if (userId !== req.userId) throw new AppError('Access denied', 403);
+  if (userId !== req.userId) {
+    // Not the owner — the only other valid caller is a family member with an
+    // approved, currently-active link to this user's vault.
+    const { hasApprovedFamilyAccess } = await import('../services/family.service');
+    const allowed = await hasApprovedFamilyAccess(req.userId!, userId);
+    if (!allowed) throw new AppError('Access denied', 403);
+  }
 
-  const filePath = getLocalFilePath(userId, fileName);
+  // Normalize before it ever touches a DB query or the filesystem — strips any
+  // "../" traversal attempt down to a bare filename (see security audit VULN-01).
+  const safeName = path.basename(param(req.params.fileName));
+  if (!safeName || safeName === '.' || safeName === '..') {
+    res.status(404).json({ message: 'File not found' });
+    return;
+  }
+
+  // The DB lookup is the actual authorization gate now: a file is only ever
+  // streamed if a record proves the target user owns it, not merely because
+  // something on disk happens to resolve to that path.
+  const { File } = await import('../models/File');
+  const match = await File.findOne({
+    userId,
+    storageType: 'local',
+    s3Key: { $regex: `${safeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$` },
+  });
+  if (!match) {
+    res.status(404).json({ message: 'File not found' });
+    return;
+  }
+
+  const filePath = getLocalFilePath(userId, safeName);
   if (!fs.existsSync(filePath)) {
     res.status(404).json({ message: 'File not found' });
     return;
   }
 
-  const { File } = await import('../models/File');
-  const match = await File.findOne({
-    userId: req.userId,
-    s3Key: { $regex: fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') },
-    storageType: 'local',
-  });
-
-  if (match) {
-    res.setHeader('Content-Type', match.mimeType);
-    res.setHeader('Content-Disposition', `inline; filename="${match.originalName}"`);
-  }
-
+  res.setHeader('Content-Type', match.mimeType);
+  res.setHeader('Content-Disposition', `inline; filename="${match.originalName}"`);
   fs.createReadStream(filePath).pipe(res);
 };
 

@@ -3,7 +3,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 export interface IActivity extends Document {
   userId: Types.ObjectId;
   action: string;
-  targetType: 'file' | 'folder' | 'profile' | 'auth' | 'card';
+  targetType: 'file' | 'folder' | 'profile' | 'auth' | 'card' | 'family';
   targetId?: Types.ObjectId;
   targetName?: string;
   metadata?: Record<string, unknown>;
@@ -14,7 +14,7 @@ const activitySchema = new Schema<IActivity>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     action: { type: String, required: true },
-    targetType: { type: String, enum: ['file', 'folder', 'profile', 'auth', 'card'], required: true },
+    targetType: { type: String, enum: ['file', 'folder', 'profile', 'auth', 'card', 'family'], required: true },
     targetId: { type: Schema.Types.ObjectId },
     targetName: { type: String },
     metadata: { type: Schema.Types.Mixed },

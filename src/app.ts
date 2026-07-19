@@ -65,6 +65,16 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 
+// OTP-bearing endpoints get the same tight budget as auth — both send email
+// and are brute-force/spam targets otherwise.
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { message: 'Too many attempts, please try again later' },
+});
+app.use('/api/family/request', otpLimiter);
+app.use(/^\/api\/family\/links\/[^/]+\/(verify-otp|resend-otp)$/, otpLimiter);
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });

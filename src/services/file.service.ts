@@ -2,7 +2,7 @@ import path from 'path';
 import { Types } from 'mongoose';
 import { File, IFile, FileCategory } from '../models/File';
 import { Activity } from '../models/Activity';
-import { uploadFile, deleteStoredFile, getPresignedDownloadUrl, getPresignedViewUrl, getPresignedUploadUrl } from './storage.service';
+import { uploadFile, deleteStoredFile, getPresignedDownloadUrl, getPresignedViewUrl, getPresignedUploadUrl, getS3ObjectMeta } from './storage.service';
 import { getDashboardCardSummary } from './card.service';
 import { getUserStorageUsage, assertStorageQuota } from './storage.quota.service';
 import { contentMatchesMime } from '../utils/fileSignature';
@@ -345,14 +345,31 @@ export const confirmPresignedUpload = async (
   userId: string,
   data: { key: string; originalName: string; mimeType: string; size: number; folderId?: string; category?: FileCategory }
 ) => {
-  validateFile(data.mimeType, data.size);
-  await assertStorageQuota(userId, data.size);
+  // The client only ever gets a presigned key inside its own namespace (see
+  // getUploadKey in storage.service.ts), so a key outside that prefix could
+  // only be here because the caller supplied it directly rather than
+  // uploading through us — reject it outright (security audit VULN-02).
+  const expectedPrefix = `users/${userId}/`;
+  if (typeof data.key !== 'string' || !data.key.startsWith(expectedPrefix)) {
+    throw new AppError('Invalid upload key', 400);
+  }
+
+  // Trust S3's own record of the object over whatever the client claims —
+  // this also confirms the object was actually uploaded before we register it.
+  const meta = await getS3ObjectMeta(data.key);
+  if (!meta) throw new AppError('Uploaded object not found', 400);
+
+  const mimeType = meta.contentType || data.mimeType;
+  const size = meta.size;
+
+  validateFile(mimeType, size);
+  await assertStorageQuota(userId, size);
   const doc = await File.create({
     userId,
     name: data.originalName,
     originalName: data.originalName,
-    mimeType: data.mimeType,
-    size: data.size,
+    mimeType,
+    size,
     s3Key: data.key,
     s3Url: `s3://${process.env.AWS_S3_BUCKET}/${data.key}`,
     storageType: 's3',

@@ -1,23 +1,13 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import nodemailer from 'nodemailer';
 import { User } from '../models/User';
 import { Activity } from '../models/Activity';
 import { generateAccessToken, generateRefreshToken } from '../middleware/auth';
 import { env } from '../config/env';
 import { AppError } from '../middleware/errorHandler';
+import { sendMail } from './mailer.service';
 
 const SALT_ROUNDS = 12;
-
-const getMailer = () => {
-  if (!env.smtpHost || !env.smtpUser) return null;
-  return nodemailer.createTransport({
-    host: env.smtpHost,
-    port: env.smtpPort,
-    secure: false,
-    auth: { user: env.smtpUser, pass: env.smtpPass },
-  });
-};
 
 export const registerUser = async (data: {
   email: string;
@@ -45,6 +35,15 @@ export const registerUser = async (data: {
   const accessToken = generateAccessToken(user._id.toString(), user.email);
   const refreshToken = generateRefreshToken(user._id.toString(), user.email);
   await User.findByIdAndUpdate(user._id, { refreshToken });
+
+  // Best-effort: a transient SMTP failure shouldn't fail the registration
+  // the user is actively waiting on.
+  sendMail({
+    to: user.email,
+    subject: 'Welcome to Document Vault',
+    html: `<p>Hi ${user.firstName},</p><p>Your Document Vault account is ready. Start uploading and organizing your documents at <a href="${env.clientUrl}">${env.clientUrl}</a>.</p>`,
+    fallbackLog: `Welcome email for ${user.email} (${user.firstName})`,
+  }).catch((err) => console.error('Failed to send welcome email:', err));
 
   const { password: _, refreshToken: __, ...userData } = user.toObject();
   return { user: userData, accessToken, refreshToken };
@@ -107,18 +106,13 @@ export const forgotPassword = async (email: string) => {
   await user.save();
 
   const resetUrl = `${env.clientUrl}/reset-password?token=${resetToken}`;
-  const mailer = getMailer();
 
-  if (mailer) {
-    await mailer.sendMail({
-      from: env.smtpFrom,
-      to: user.email,
-      subject: 'Reset your Document Vault password',
-      html: `<p>Click <a href="${resetUrl}">here</a> to reset your password. Link expires in 1 hour.</p>`,
-    });
-  } else {
-    console.log(`Password reset link for ${email}: ${resetUrl}`);
-  }
+  await sendMail({
+    to: user.email,
+    subject: 'Reset your Document Vault password',
+    html: `<p>Click <a href="${resetUrl}">here</a> to reset your password. Link expires in 1 hour.</p>`,
+    fallbackLog: `Password reset link for ${email}: ${resetUrl}`,
+  });
 
   return { message: 'If that email exists, a reset link has been sent' };
 };

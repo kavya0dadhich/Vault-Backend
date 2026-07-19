@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
 import { env, useS3 } from '../config/env';
+import { AppError } from '../middleware/errorHandler';
 
 const s3Client = useS3()
   ? new S3Client({
@@ -127,8 +128,22 @@ export const getPresignedViewUrl = async (
   return `/files/local/${userId}/${path.basename(key)}`;
 };
 
-export const getLocalFilePath = (userId: string, fileName: string): string =>
-  path.resolve(env.localUploadDir, `users/${userId}`, fileName);
+// fileName must be a bare filename with no directory components — path.basename()
+// strips any "../" traversal segments, and the startsWith() check below is a
+// defense-in-depth guard against the resolved path ever escaping the user's
+// own upload directory (see security audit VULN-01).
+export const getLocalFilePath = (userId: string, fileName: string): string => {
+  const base = path.resolve(env.localUploadDir, `users/${userId}`);
+  const safeName = path.basename(fileName);
+  if (!safeName || safeName === '.' || safeName === '..') {
+    throw new AppError('Invalid file path', 400);
+  }
+  const resolved = path.resolve(base, safeName);
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+    throw new AppError('Invalid file path', 400);
+  }
+  return resolved;
+};
 
 // Returns a readable stream of the stored file, for either storage backend.
 // Used to proxy raw bytes to the client (same-origin) so the browser can parse
@@ -153,3 +168,19 @@ export const getFileStream = async (
 };
 
 export const isS3Enabled = (): boolean => useS3();
+
+// Confirms an object actually exists at `key` and returns S3's own record of its
+// size/content-type, rather than trusting whatever the client claims those to be
+// (see security audit VULN-02 — confirm-upload previously trusted client input
+// with no verification that the object existed at all).
+export const getS3ObjectMeta = async (
+  key: string
+): Promise<{ size: number; contentType?: string } | null> => {
+  if (!useS3() || !s3Client) return null;
+  try {
+    const result = await s3Client.send(new HeadObjectCommand({ Bucket: env.awsS3Bucket, Key: key }));
+    return { size: result.ContentLength ?? 0, contentType: result.ContentType };
+  } catch {
+    return null;
+  }
+};
